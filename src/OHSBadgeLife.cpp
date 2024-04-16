@@ -35,109 +35,156 @@
 
 */
 #include <Arduino.h>
-#include <FastLED.h>
 
-#include "Debounce.h"
-#include "OHS2024Badge.h"
+// Pin Definitions
+// ===============
 
-// badge LED control
-OHS2024Badge badge = {};
+#define MODE_BUTTON_PIN 26
 
-// mode button press with debounce
-Debounce debounce = {};
-bool button_press_processed = false;
-const byte mode_button_pin = 26;
+#define LED_PIN_HEAD_RIGHT 23
+#define LED_PIN_HEAD_TOP 4
+#define LED_PIN_HEAD_LEFT 3
+
+#define LED_PIN_EYE_RIGHT 19
+#define LED_PIN_EYE_LEFT 15
+
+#define LED_PIN_BODY_RIGHT 18
+#define LED_PIN_BODY_CENTER 17
+#define LED_PIN_BODY_LEFT 16
+
+#define COLOR_PIN_RED 2
+#define COLOR_PIN_GREEN 1
+#define COLOR_PIN_BLUE 0
+
+// LED Index
+// =========
+
+#define LED_HEAD_RIGHT 0
+#define LED_HEAD_TOP 1
+#define LED_HEAD_LEFT 2
+
+#define LED_EYE_LEFT 3
+#define LED_EYE_RIGHT 4
+
+#define LED_BODY_RIGHT 5
+#define LED_BODY_CENTER 6
+#define LED_BODY_LEFT 7
+
+#define NUM_LEDS 8
+
+// LED functions
+// =============
+
+void SetColor(int red, int green, int blue);
+void SetColorBrightness(int red, int green, int blue, int brightness);
+
+void TurnOnLed(int index);
+void TurnOffLed(int index);
+
+void TurnOnHeadLEDs();
+void TurnOffHeadLEDs();
+
+void TurnOnEyeLEDs();
+void TurnOffEyeLEDs();
+
+void TurnOnBodyLEDs();
+void TurnOffBodyLEDs();
+
+// Animations
+// ==========
 
 // Animation
-const byte anim_num_modes = 3;
-const unsigned long anim_speed_period_ms = 1000;
-unsigned long anim_time = 0;
-byte anim_mode = 0;
+#define ANIM_NUM_MODES 3
+int anim_mode = 0;
 
-// colors
-const CRGB color_start = CRGB(0, 0, 0);
-const CRGB color_eyes = CRGB(0, 200, 100);
-const CRGB color_body = CRGB(200, 100, 0);
-const CRGB color_head = CRGB(100, 0, 200);
-CRGB color_current = color_eyes;
+// button debounce
+#define DEBOUNCE_MAX_STEPS 10
+bool ButtonDebounce(int button_input);
 
 // polling timer at 20 milliseconds (50 times per second)
-const unsigned long timer_step = 20;
-unsigned long timer_prev;
+#define TIMER_STEP_MS 20
+uint32_t timer_prev;
 
 void setup() {
-    // initialize badge LEDs
-    badge.Setup();
+    // PWM cathodes to HIGH
+    pinMode(COLOR_PIN_RED, OUTPUT);
+    digitalWrite(COLOR_PIN_RED, HIGH);
+    pinMode(COLOR_PIN_GREEN, OUTPUT);
+    digitalWrite(COLOR_PIN_GREEN, HIGH);
+    pinMode(COLOR_PIN_BLUE, OUTPUT);
+    digitalWrite(COLOR_PIN_BLUE, HIGH);
+
+    // Anodes to LOW
+    pinMode(LED_PIN_HEAD_RIGHT, OUTPUT);
+    digitalWrite(LED_PIN_HEAD_RIGHT, LOW);
+    pinMode(LED_PIN_HEAD_TOP, OUTPUT);
+    digitalWrite(LED_PIN_HEAD_TOP, LOW);
+    pinMode(LED_PIN_HEAD_LEFT, OUTPUT);
+    digitalWrite(LED_PIN_HEAD_LEFT, LOW);
+
+    pinMode(LED_PIN_EYE_RIGHT, OUTPUT);
+    digitalWrite(LED_PIN_EYE_RIGHT, LOW);
+    pinMode(LED_PIN_EYE_LEFT, OUTPUT);
+    digitalWrite(LED_PIN_EYE_LEFT, LOW);
+
+    pinMode(LED_PIN_BODY_RIGHT, OUTPUT);
+    digitalWrite(LED_PIN_BODY_RIGHT, LOW);
+    pinMode(LED_PIN_BODY_CENTER, OUTPUT);
+    digitalWrite(LED_PIN_BODY_CENTER, LOW);
+    pinMode(LED_PIN_BODY_LEFT, OUTPUT);
+    digitalWrite(LED_PIN_BODY_LEFT, LOW);
 
     // Button mode
-    pinMode(mode_button_pin, INPUT_PULLUP);
-    DebounceConfiguration debounce_config = {};
-    debounce_config.pin = mode_button_pin;
-    debounce_config.polarity = HIGH;
-    debounce_config.max_count = 20;
-    debounce_config.delay_microseconds = 5000;
-    debounce.Setup(debounce_config);
-
-    // initial animation
-    anim_mode = 0;
-    anim_time = 0;
+    pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
 
     // Start with eyes on
-    badge.TurnOffBodyLEDs();
-    badge.TurnOffHeadLEDs();
-    badge.TurnOnEyeLEDs();
+    TurnOffBodyLEDs();
+    TurnOffHeadLEDs();
+    TurnOnEyeLEDs();
+
+    // Start with green
+    SetColor(0, 200, 50);
 
     // timer begin
     timer_prev = millis();
 }
 
 void loop() {
-    const unsigned long now = millis();
-    const byte mode_reading = digitalRead(mode_button_pin);
-
-    // Get button press state
-    const bool button_press = debounce.Update();
-    if ((!button_press) && button_press_processed)
-    {
-        // reset when button is released
-        button_press_processed = false;
-    }
+    // get mode button input
+    bool button_pressed = ButtonDebounce(digitalRead(MODE_BUTTON_PIN));
 
     // run timer
-    const unsigned long elapsed = now - timer_prev;
-    if (elapsed >= timer_step) {
+    uint32_t now = millis();
+    uint32_t elapsed = now - timer_prev;
+    if (elapsed >= TIMER_STEP_MS) {
         // advance timer
-        timer_prev = timer_prev + timer_step;
+        timer_prev = timer_prev + TIMER_STEP_MS;
 
         // process mode button press
-        if (button_press && !button_press_processed) {
-            button_press_processed = true;
+        if (button_pressed) {
             // button pressed: go to next animation mode
-            anim_mode = (anim_mode + 1) % anim_mode;
+            anim_mode = (anim_mode + 1) % ANIM_NUM_MODES;
             // transition state
             switch (anim_mode) {
                 case 0:
                     // Transition to Eyes
-                    badge.TurnOffBodyLEDs();
-                    badge.TurnOffHeadLEDs();
-                    badge.TurnOnEyeLEDs();
-                    color_current = color_eyes;
+                    TurnOffBodyLEDs();
+                    TurnOffHeadLEDs();
+                    TurnOnEyeLEDs();
                     break;
 
                 case 1:
                     // Transition to Body
-                    badge.TurnOffEyeLEDs();
-                    badge.TurnOffHeadLEDs();
-                    badge.TurnOnBodyLEDs();
-                    color_current = color_body;
+                    TurnOffEyeLEDs();
+                    TurnOffHeadLEDs();
+                    TurnOnBodyLEDs();
                     break;
 
                 case 2:
                     // Transition to Head
-                    badge.TurnOffBodyLEDs();
-                    badge.TurnOffEyeLEDs();
-                    badge.TurnOnHeadLEDs();
-                    color_current = color_head;
+                    TurnOffBodyLEDs();
+                    TurnOffEyeLEDs();
+                    TurnOnHeadLEDs();
                     break;
 
                 default:
@@ -145,17 +192,149 @@ void loop() {
             }
         }
 
-        // color animation
-        anim_time = anim_time + timer_step;
-        if (anim_time >= anim_speed_period_ms) {
-            // wrap animation time when exceeds period
-            anim_time = (anim_time - anim_speed_period_ms);
-        }
-        // blend with breathing waveform
-        const byte wave_input = static_cast<byte>((anim_time * UINT8_MAX) / anim_speed_period_ms);
-        const byte blend_amount = quadwave8(wave_input);
-        // blend color
-        const CRGB color = blend(color_start, color_current, blend_amount);
-        badge.SetColor(color.r, color.g, color.b);
+        // TODO: animate color
     }
+}
+
+void SetColorBrightness(int red, int green, int blue, int brightness) {
+    red = (constrain(red, 0, 255) * constrain(brightness, 0, 255)) / 255;
+    green = (constrain(green, 0, 255) * constrain(brightness, 0, 255)) / 255;
+    blue = (constrain(blue, 0, 255) * constrain(brightness, 0, 255)) / 255;
+    analogWrite(COLOR_PIN_RED, red);
+    analogWrite(COLOR_PIN_GREEN, green);
+    analogWrite(COLOR_PIN_BLUE, blue);
+}
+
+void SetColor(int red, int green, int blue) {
+    red = 255 - constrain(red, 0, 255);
+    green = 255 - constrain(green, 0, 255);
+    blue = 255 - constrain(blue, 0, 255);
+    analogWrite(COLOR_PIN_RED, red);
+    analogWrite(COLOR_PIN_GREEN, green);
+    analogWrite(COLOR_PIN_BLUE, blue);
+}
+
+void TurnOnLed(int index) {
+    switch (index) {
+        case LED_HEAD_RIGHT:
+            digitalWrite(LED_PIN_HEAD_RIGHT, HIGH);
+            break;
+        case LED_HEAD_TOP:
+            digitalWrite(LED_PIN_HEAD_TOP, HIGH);
+            break;
+        case LED_HEAD_LEFT:
+            digitalWrite(LED_PIN_HEAD_LEFT, HIGH);
+            break;
+        case LED_EYE_RIGHT:
+            digitalWrite(LED_PIN_EYE_RIGHT, HIGH);
+            break;
+        case LED_EYE_LEFT:
+            digitalWrite(LED_PIN_EYE_LEFT, HIGH);
+            break;
+        case LED_BODY_RIGHT:
+            digitalWrite(LED_PIN_BODY_RIGHT, HIGH);
+            break;
+        case LED_BODY_CENTER:
+            digitalWrite(LED_PIN_BODY_CENTER, HIGH);
+            break;
+        case LED_BODY_LEFT:
+            digitalWrite(LED_PIN_BODY_LEFT, HIGH);
+            break;
+        default:
+            break;
+    }
+}
+
+void TurnOffLed(int index) {
+    switch (index) {
+        case LED_HEAD_RIGHT:
+            digitalWrite(LED_PIN_HEAD_RIGHT, LOW);
+            break;
+        case LED_HEAD_TOP:
+            digitalWrite(LED_PIN_HEAD_TOP, LOW);
+            break;
+        case LED_HEAD_LEFT:
+            digitalWrite(LED_PIN_HEAD_LEFT, LOW);
+            break;
+        case LED_EYE_RIGHT:
+            digitalWrite(LED_PIN_EYE_RIGHT, LOW);
+            break;
+        case LED_EYE_LEFT:
+            digitalWrite(LED_PIN_EYE_LEFT, LOW);
+            break;
+        case LED_BODY_RIGHT:
+            digitalWrite(LED_PIN_BODY_RIGHT, LOW);
+            break;
+        case LED_BODY_CENTER:
+            digitalWrite(LED_PIN_BODY_CENTER, LOW);
+            break;
+        case LED_BODY_LEFT:
+            digitalWrite(LED_PIN_BODY_LEFT, LOW);
+            break;
+        default:
+            break;
+    }
+}
+
+void TurnOnHeadLEDs() {
+    digitalWrite(LED_PIN_HEAD_RIGHT, HIGH);
+    digitalWrite(LED_PIN_HEAD_TOP, HIGH);
+    digitalWrite(LED_PIN_HEAD_LEFT, HIGH);
+}
+
+void TurnOffHeadLEDs() {
+    digitalWrite(LED_PIN_HEAD_RIGHT, LOW);
+    digitalWrite(LED_PIN_HEAD_TOP, LOW);
+    digitalWrite(LED_PIN_HEAD_LEFT, LOW);
+}
+
+void TurnOnEyeLEDs() {
+    digitalWrite(LED_PIN_EYE_RIGHT, HIGH);
+    digitalWrite(LED_PIN_EYE_LEFT, HIGH);
+}
+void TurnOffEyeLEDs() {
+    digitalWrite(LED_PIN_EYE_RIGHT, LOW);
+    digitalWrite(LED_PIN_EYE_LEFT, LOW);
+}
+
+void TurnOnBodyLEDs() {
+    digitalWrite(LED_PIN_BODY_RIGHT, HIGH);
+    digitalWrite(LED_PIN_BODY_CENTER, HIGH);
+    digitalWrite(LED_PIN_BODY_LEFT, HIGH);
+}
+void TurnOffBodyLEDs() {
+    digitalWrite(LED_PIN_BODY_RIGHT, LOW);
+    digitalWrite(LED_PIN_BODY_CENTER, LOW);
+    digitalWrite(LED_PIN_BODY_LEFT, LOW);
+}
+
+bool ButtonDebounce(int button_input) {
+    static int button_prev = HIGH;
+    static int button_steps = 0;
+
+    bool button_pressed = false;
+    if (button_prev == HIGH) {
+        if (button_input == LOW) {
+            button_steps++;
+            if (button_steps > DEBOUNCE_MAX_STEPS) {
+                button_pressed = true;
+                button_prev = LOW;
+                button_steps = 0;
+            }
+        } else if (button_steps > 0) {
+            button_steps--;
+        }
+    } else {
+        if (button_input == HIGH) {
+            button_steps++;
+            if (button_steps > DEBOUNCE_MAX_STEPS) {
+                button_prev = HIGH;
+                button_steps = 0;
+            }
+        } else if (button_steps > 0) {
+            button_steps--;
+        }
+    }
+
+    return button_pressed;
 }
