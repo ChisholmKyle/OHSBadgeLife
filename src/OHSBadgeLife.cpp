@@ -37,29 +37,29 @@
 #include <Arduino.h>
 #include <FastLED.h>
 
+#include "Debounce.h"
 #include "OHS2024Badge.h"
 
 // badge LED control
 OHS2024Badge badge = {};
 
-// aniamtion modes
+// mode button press with debounce
+Debounce debounce = {};
+bool button_press_processed = false;
+const byte mode_button_pin = 26;
+
+// Animation
 const byte anim_num_modes = 3;
 const unsigned long anim_speed_period_ms = 1000;
 unsigned long anim_time = 0;
 byte anim_mode = 0;
 
-// mode button press with debounce
-const byte mode_button_pin = 26;
-// debounce
-const byte mode_debounce_delay = 200;
-unsigned long mode_debounce_time_prev = 0;
-byte mode_button_state = HIGH;
-byte mode_button_state_prev = HIGH;
-
-// state of color chosen
-CRGB color_start = {};
-CRGB color_fade = {};
-byte color_fade_state = 0;
+// colors
+const CRGB color_start = CRGB(0, 0, 0);
+const CRGB color_eyes = CRGB(0, 200, 100);
+const CRGB color_body = CRGB(200, 100, 0);
+const CRGB color_head = CRGB(100, 0, 200);
+CRGB color_current = color_eyes;
 
 // polling timer at 20 milliseconds (50 times per second)
 const unsigned long timer_step = 20;
@@ -69,10 +69,14 @@ void setup() {
     // initialize badge LEDs
     badge.Setup();
 
-    // Initial mode state
+    // Button mode
     pinMode(mode_button_pin, INPUT_PULLUP);
-    mode_button_state = HIGH;
-    mode_button_state_prev = HIGH;
+    DebounceConfiguration debounce_config = {};
+    debounce_config.pin = mode_button_pin;
+    debounce_config.polarity = HIGH;
+    debounce_config.max_count = 20;
+    debounce_config.delay_microseconds = 5000;
+    debounce.Setup(debounce_config);
 
     // initial animation
     anim_mode = 0;
@@ -83,24 +87,20 @@ void setup() {
     badge.TurnOffHeadLEDs();
     badge.TurnOnEyeLEDs();
 
-    // Initialize start and end color
-    color_start = CRGB{0, 0, 0};
-    color_fade = CRGB(0, 200, 80);
-    color_fade_state = 0;
-
     // timer begin
     timer_prev = millis();
-    // mdoe debounce last time
-    mode_debounce_time_prev = timer_prev;
 }
 
 void loop() {
     const unsigned long now = millis();
     const byte mode_reading = digitalRead(mode_button_pin);
 
-    // Debounce: button state changed, due to noise or pressing, log time
-    if (mode_reading != mode_button_state_prev) {
-        mode_debounce_time_prev = now;
+    // Get button press state
+    const bool button_press = debounce.Update();
+    if ((!button_press) && button_press_processed)
+    {
+        // reset when button is released
+        button_press_processed = false;
     }
 
     // run timer
@@ -109,43 +109,35 @@ void loop() {
         // advance timer
         timer_prev = timer_prev + timer_step;
 
-        // Check for button press with debounce (Falling edge)
-        bool mode_button_pressed = false;
-        if (((now - mode_debounce_time_prev) > mode_debounce_delay) && (mode_reading != mode_button_state)) {
-            // Enough time has passed without changing state
-            mode_button_state = mode_reading;
-            // only consider it pressed on falling edge to low state
-            mode_button_pressed = (mode_reading == LOW);
-        }
-
-        // handle mode button press
-        if (mode_button_pressed) {
-            // cycle animation modes
+        // process mode button press
+        if (button_press && !button_press_processed) {
+            button_press_processed = true;
+            // button pressed: go to next animation mode
             anim_mode = (anim_mode + 1) % anim_mode;
             // transition state
             switch (anim_mode) {
                 case 0:
-                    // Eyes
+                    // Transition to Eyes
                     badge.TurnOffBodyLEDs();
                     badge.TurnOffHeadLEDs();
                     badge.TurnOnEyeLEDs();
-                    color_fade = CRGB(0, 200, 100);
+                    color_current = color_eyes;
                     break;
 
                 case 1:
-                    // Body
+                    // Transition to Body
                     badge.TurnOffEyeLEDs();
                     badge.TurnOffHeadLEDs();
                     badge.TurnOnBodyLEDs();
-                    color_fade = CRGB(200, 100, 0);
+                    color_current = color_body;
                     break;
 
                 case 2:
-                    // Head
+                    // Transition to Head
                     badge.TurnOffBodyLEDs();
                     badge.TurnOffEyeLEDs();
                     badge.TurnOnHeadLEDs();
-                    color_fade = CRGB(100, 0, 200);
+                    color_current = color_head;
                     break;
 
                 default:
@@ -159,11 +151,11 @@ void loop() {
             // wrap animation time when exceeds period
             anim_time = (anim_time - anim_speed_period_ms);
         }
-        // fade with breathing waveform
+        // blend with breathing waveform
         const byte wave_input = static_cast<byte>((anim_time * UINT8_MAX) / anim_speed_period_ms);
-        color_fade_state = quadwave8(wave_input);
+        const byte blend_amount = quadwave8(wave_input);
         // blend color
-        const CRGB color = blend(color_start, color_fade, color_fade_state);
+        const CRGB color = blend(color_start, color_current, blend_amount);
         badge.SetColor(color.r, color.g, color.b);
     }
 }
